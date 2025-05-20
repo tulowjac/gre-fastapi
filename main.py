@@ -1,21 +1,24 @@
-from dotenv import load_dotenv
-load_dotenv()
+import os
+import datetime
+from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List
-import datetime
 import sqlalchemy
 import databases
-import os
 
-# Read from Render environment variable
-DATABASE_URL = os.getenv("DATABASE_URL")
+# -------------------------
+# TEMP FIX: Hardcoded DATABASE_URL
+# This bypasses the .env loading issue for now
+# -------------------------
+DATABASE_URL = "postgresql://gre_progress_db_user:BK8Oc6Qmxeym5DWTE8IZP0UrxsI2XtXW@dpg-d0mfgvmuk2gs73fkfj10-a/gre_progress_db"
+print("✅ Using DATABASE_URL =", DATABASE_URL)
 
+# -------------------------
 # Database setup
+# -------------------------
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
 
-# Define the progress table
 progress = sqlalchemy.Table(
     "progress",
     metadata,
@@ -26,13 +29,11 @@ progress = sqlalchemy.Table(
     sqlalchemy.Column("awa", sqlalchemy.Float),
 )
 
-# Create the engine and the table
 engine = sqlalchemy.create_engine(DATABASE_URL)
 metadata.create_all(engine)
 
 app = FastAPI(title="GRE Custom Actions API")
 
-# Connect/disconnect on app startup/shutdown
 @app.on_event("startup")
 async def startup():
     await database.connect()
@@ -94,7 +95,6 @@ def generate_practice_quiz(request: QuizRequest):
 # ----------------------
 @app.post("/v1/gre/progress", response_model=ProgressTrend)
 async def track_progress(entry: ProgressEntry):
-    # Insert new entry
     query = progress.insert().values(
         date=entry.date,
         verbal=entry.verbal,
@@ -103,10 +103,7 @@ async def track_progress(entry: ProgressEntry):
     )
     await database.execute(query)
 
-    # Fetch all progress entries
     rows = await database.fetch_all(progress.select().order_by(progress.c.date))
-
-    # Calculate averages
     total_v = sum(row["verbal"] for row in rows)
     total_q = sum(row["quant"] for row in rows)
     total_a = sum(row["awa"] for row in rows)
