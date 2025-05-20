@@ -1,0 +1,13 @@
+# Ignore environment config
+.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# OS + IDE clutter
+.DS_Store
+.vscode/
+
+# Virtual environment
+venv/
