@@ -1,54 +1,21 @@
-import os
-import datetime
-from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import sqlalchemy
-import databases
-
-# -------------------------
-# TEMP FIX: Hardcoded DATABASE_URL
-# This bypasses the .env loading issue for now
-# -------------------------
-DATABASE_URL = "postgresql://gre_progress_db_user:BK8Oc6Qmxeym5DWTE8IZP0UrxsI2XtXW@dpg-d0mfgvmuk2gs73fkfj10-a/gre_progress_db"
-print("✅ Using DATABASE_URL =", DATABASE_URL)
-
-# -------------------------
-# Database setup
-# -------------------------
-database = databases.Database(DATABASE_URL)
-metadata = sqlalchemy.MetaData()
-
-progress = sqlalchemy.Table(
-    "progress",
-    metadata,
-    sqlalchemy.Column("id", sqlalchemy.Integer, primary_key=True),
-    sqlalchemy.Column("date", sqlalchemy.Date),
-    sqlalchemy.Column("verbal", sqlalchemy.Float),
-    sqlalchemy.Column("quant", sqlalchemy.Float),
-    sqlalchemy.Column("awa", sqlalchemy.Float),
-)
-
-engine = sqlalchemy.create_engine(DATABASE_URL)
-metadata.create_all(engine)
+from typing import List, Optional, Dict, Any
+import datetime
+import feedparser
 
 app = FastAPI(title="GRE Custom Actions API")
 
-@app.on_event("startup")
-async def startup():
-    await database.connect()
-
-@app.on_event("shutdown")
-async def shutdown():
-    await database.disconnect()
+# In-memory storage for progress tracking
+progress_db: List[Dict[str, Any]] = []
 
 # ----------------------
-# Pydantic Models
+# Request/Response Models
 # ----------------------
 class QuizRequest(BaseModel):
-    section: str
+    section: str  # 'verbal' | 'quant' | 'awa'
     numQuestions: int
-    difficulty: str = "medium"
+    difficulty: Optional[str] = 'medium'  # 'easy' | 'medium' | 'hard'
 
 class QuizItem(BaseModel):
     question_id: str
@@ -91,37 +58,32 @@ def generate_practice_quiz(request: QuizRequest):
     return QuizResponse(quiz=quiz)
 
 # ----------------------
-# Endpoint: trackProgress (now using DB)
+# Endpoint: trackProgress (in-memory)
 # ----------------------
 @app.post("/v1/gre/progress", response_model=ProgressTrend)
-async def track_progress(entry: ProgressEntry):
-    query = progress.insert().values(
-        date=entry.date,
-        verbal=entry.verbal,
-        quant=entry.quant,
-        awa=entry.awa
-    )
-    await database.execute(query)
+def track_progress(entry: ProgressEntry):
+    progress_db.append(entry.dict())
 
-    rows = await database.fetch_all(progress.select().order_by(progress.c.date))
-    total_v = sum(row["verbal"] for row in rows)
-    total_q = sum(row["quant"] for row in rows)
-    total_a = sum(row["awa"] for row in rows)
-    count = len(rows)
+    total = {'verbal': 0.0, 'quant': 0.0, 'awa': 0.0}
+    for e in progress_db:
+        total['verbal'] += e['verbal']
+        total['quant'] += e['quant']
+        total['awa']   += e['awa']
+    count = len(progress_db)
 
-    return ProgressTrend(
-        average_verbal=total_v / count,
-        average_quant=total_q / count,
-        average_awa=total_a / count,
-        entries=[ProgressEntry(**row) for row in rows]
+    trend = ProgressTrend(
+        average_verbal=total['verbal'] / count,
+        average_quant=total['quant'] / count,
+        average_awa=total['awa'] / count,
+        entries=[ProgressEntry(**e) for e in progress_db]
     )
+    return trend
 
 # ----------------------
 # Endpoint: fetchETSUpdates
 # ----------------------
 @app.get("/v1/gre/fetchETSUpdates")
 def fetch_ets_updates():
-    import feedparser
     rss_url = "https://www.ets.org/gre/news/rss"
     feed = feedparser.parse(rss_url)
 
