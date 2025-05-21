@@ -1,4 +1,12 @@
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+load_dotenv()
+import os
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("❌ DATABASE_URL not set")
+
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import datetime
@@ -6,8 +14,10 @@ import feedparser
 
 app = FastAPI(title="GRE Custom Actions API")
 
-# In-memory storage for progress tracking
-progress_db: List[Dict[str, Any]] = []
+# ----------------------
+# In-memory storage now per user_id
+# ----------------------
+progress_db: Dict[str, List[Dict[str, Any]]] = {}
 
 # ----------------------
 # Request/Response Models
@@ -58,24 +68,32 @@ def generate_practice_quiz(request: QuizRequest):
     return QuizResponse(quiz=quiz)
 
 # ----------------------
-# Endpoint: trackProgress (in-memory)
+# Endpoint: trackProgress (in-memory per user)
 # ----------------------
 @app.post("/v1/gre/progress", response_model=ProgressTrend)
-def track_progress(entry: ProgressEntry):
-    progress_db.append(entry.dict())
+def track_progress(request: Request, entry: ProgressEntry):
+    user_id = request.headers.get("OpenAI-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing OpenAI-User-ID header")
+
+    if user_id not in progress_db:
+        progress_db[user_id] = []
+
+    progress_db[user_id].append(entry.dict())
+    user_entries = progress_db[user_id]
 
     total = {'verbal': 0.0, 'quant': 0.0, 'awa': 0.0}
-    for e in progress_db:
+    for e in user_entries:
         total['verbal'] += e['verbal']
         total['quant'] += e['quant']
-        total['awa']   += e['awa']
-    count = len(progress_db)
+        total['awa'] += e['awa']
+    count = len(user_entries)
 
     trend = ProgressTrend(
         average_verbal=total['verbal'] / count,
         average_quant=total['quant'] / count,
         average_awa=total['awa'] / count,
-        entries=[ProgressEntry(**e) for e in progress_db]
+        entries=[ProgressEntry(**e) for e in user_entries]
     )
     return trend
 
