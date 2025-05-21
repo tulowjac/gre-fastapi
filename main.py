@@ -1,6 +1,10 @@
+import os
+
+import google.generativeai as genai
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
 from dotenv import load_dotenv
 load_dotenv()
-import os
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -54,18 +58,30 @@ class ProgressTrend(BaseModel):
 # ----------------------
 @app.post("/v1/gre/quiz", response_model=QuizResponse)
 def generate_practice_quiz(request: QuizRequest):
-    quiz = []
-    for i in range(request.numQuestions):
-        quiz.append(
-            QuizItem(
-                question_id=f"{request.section[:1]}-{i+1}",
-                question=f"Sample {request.section} question {i+1} (difficulty {request.difficulty})?",
-                choices=["A", "B", "C", "D"],
-                answer="A",
-                explanation="This is the sample explanation."
-            )
-        )
-    return QuizResponse(quiz=quiz)
+    prompt = f"""
+Generate {request.numQuestions} GRE-style multiple choice questions for the {request.section.upper()} section.
+Each question should be {request.difficulty} difficulty and include:
+- question_id (e.g., q1)
+- question
+- choices (4 options)
+- answer (e.g., "B")
+- explanation
+
+Respond in JSON format as an array of question objects.
+"""
+
+    try:
+        model = genai.GenerativeModel("gemini-pro")
+        response = model.generate_content(prompt)
+        raw_json = response.text.strip()
+
+        import json
+        parsed = json.loads(raw_json)
+        return QuizResponse(quiz=[QuizItem(**q) for q in parsed])
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gemini generation failed: {e}")
+
 
 # ----------------------
 # Endpoint: trackProgress (in-memory per user)
